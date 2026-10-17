@@ -1,0 +1,313 @@
+<script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.expand(); }
+    const tgUser = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    
+    // ከቴሌግራም ዌብአፕ ወይም ከ URL በቀጥታ ትክክለኛውን ዩዘር ID እንቀበላለን
+    const urlParams = new URLSearchParams(window.location.search);
+    let userId = urlParams.get('user_id');
+    if (!userId && tgUser && tgUser.id) {
+        userId = String(tgUser.id);
+    }
+    // በቴሌግራም ዌብአፕ ውስጥ ካልሆነ ወይም ካልተገኘ የአድሚኑን/የእርስዎን ID በነባሪ እንይዛለን
+    if (!userId) {
+        userId = "8416118350"; 
+    }
+
+    const API_BASE = "http://10.244.171.78:5000"; 
+
+    let userWallet = 0;
+    let userBonus = 0;
+    let activePlayers = 0;
+    const grid = document.getElementById('numbersGrid');
+    let bookedNumbers = [];
+    let selectedNumber = null;
+
+    async function fetchUserProfile() {
+        try {
+            const response = await fetch(`${API_BASE}/api/user/${userId}`);
+            const data = await response.json();
+            if(data.success) {
+                userWallet = data.wallet;
+                userBonus = data.bonus;
+                document.getElementById('walletDisplay').innerText = userWallet;
+                document.getElementById('bonusDisplay').innerText = userBonus;
+                document.getElementById('profileWallet').innerText = userWallet;
+                document.getElementById('profileName').innerText = (data.username || "Player") + " (Player Profile)";
+                document.getElementById('profilePhone').innerText = "📞 " + (data.phone || "--------");
+                document.getElementById('connectionStatus').innerText = "🟢 Connected to Database";
+            }
+        } catch (error) {
+            console.error("Error fetching user profile:", error);
+            document.getElementById('connectionStatus').innerText = "🔴 ከሰርቨር ጋር መገናኘት አልተቻለም";
+        }
+    }
+
+    async function fetchBookedCartelas() {
+        try {
+            const response = await fetch(`${API_BASE}/api/booked`);
+            const data = await response.json();
+            bookedNumbers = data.booked;
+            activePlayers = data.active_players;
+            
+            document.getElementById('activePlayersDisplay').innerText = activePlayers;
+            
+            let calculatedPrize = Math.max(50, activePlayers * 10 * 1.5);
+            document.getElementById('prizePoolDisplay').innerText = calculatedPrize;
+
+            buildGrid();
+            document.getElementById('connectionStatus').innerText = "🟢 Connected to Database";
+        } catch (error) {
+            console.error("Error fetching booked cartelas:", error);
+            document.getElementById('connectionStatus').innerText = "🔴 ከሰርቨር ጋር መገናኘት አልተቻለም";
+            buildGrid();
+        }
+    }
+
+    function buildGrid() {
+        grid.innerHTML = "";
+        for (let i = 1; i <= 500; i++) {
+            const btn = document.createElement('button');
+            btn.classList.add('num-btn');
+            btn.innerText = i;
+
+            if (bookedNumbers.includes(i)) {
+                btn.classList.add('booked');
+                btn.onclick = () => {
+                    alert(`⚠️ ካርቴላ ቁጥር #${i} በሌላ ተጫዋች ተይዟል!`);
+                };
+            } else {
+                btn.onclick = () => {
+                    document.querySelectorAll('.num-btn').forEach(b => {
+                        if(!b.classList.contains('booked')) b.classList.remove('selected');
+                    });
+                    btn.classList.add('selected');
+                    selectedNumber = i;
+                    document.getElementById('selectBtn').innerText = `Selected: #${i}`;
+                };
+            }
+            grid.appendChild(btn);
+        }
+    }
+
+    async function confirmSelection() {
+        if (!selectedNumber) {
+            alert("እባክዎ መጀመሪያ ካርቴላ ይምረጡ!");
+            return;
+        }
+        try {
+            const response = await fetch(`${API_BASE}/api/book`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId, cartela_num: selectedNumber })
+            });
+            const result = await response.json();
+            if(!result.success) { 
+                alert(result.message); 
+                return; 
+            }
+            alert(`✅ ካርቴላ ቁጥር #${selectedNumber} በትክክል ተይዟል!`);
+            fetchUserProfile(); 
+            fetchBookedCartelas();
+        } catch(e) {
+            console.error(e);
+            alert("⚠️ ከሰርቨር ጋር መገናኘት አልተቻለም።");
+        }
+    }
+
+    function switchScreen(screenId) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(screenId).classList.add('active');
+        
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active-nav'));
+        if(screenId === 'profileScreen') {
+            document.getElementById('navProfile').classList.add('active-nav');
+            fetchUserProfile();
+        } else {
+            document.getElementById('navPlay').classList.add('active-nav');
+            fetchUserProfile(); 
+        }
+    }
+
+    let callInterval = null;
+    let waitInterval = null;
+
+    function goToGameScreen() {
+        if (!selectedNumber) {
+            alert("እባክዎ መጀመሪያ ካርቴላ ይምረጡ!");
+            return;
+        }
+
+        if (userWallet < 10) {
+            alert("⚠️ በቂ ገንዘብ የለዎትም! እባክዎ ዎሌትዎን ይሙሉ (Deposit)።");
+            return;
+        }
+
+        switchScreen('gameScreen');
+        setupGameScreen();
+        startWaitingCountdown();
+    }
+
+    function startWaitingCountdown() {
+        let timer = 15; 
+        const timerDisplay = document.getElementById('gameTimerDisplay');
+        document.getElementById('gameStatusTag').innerText = "WAITING";
+
+        if (waitInterval) clearInterval(waitInterval);
+
+        waitInterval = setInterval(() => {
+            timer--;
+            if (timer > 0) {
+                timerDisplay.innerText = `⏳ ጨዋታው ሊጀምር ${timer} ሰከንድ ይቀረዋል...`;
+            } else {
+                clearInterval(waitInterval);
+                timerDisplay.innerText = "🎮 ጨዋታው ተጀምሯል!";
+                startCallingBalls(); 
+            }
+        }, 1000);
+    }
+
+    function setupGameScreen() {
+        const gridContainer = document.getElementById('bingoBallsGrid');
+        while (gridContainer.children.length > 5) {
+            gridContainer.removeChild(gridContainer.lastChild);
+        }
+
+        for (let row = 0; row < 15; row++) {
+            for (let col = 0; col < 5; col++) {
+                let num = (col * 15) + (row + 1);
+                const ballDiv = document.createElement('div');
+                ballDiv.classList.add('mini-ball');
+                ballDiv.id = `ball-cell-${num}`;
+                ballDiv.innerText = num;
+                gridContainer.appendChild(ballDiv);
+            }
+        }
+
+        document.getElementById('cardTitle').innerText = `ካርቴላ ቁጥር: #${selectedNumber}`;
+        const tbody = document.getElementById('bingoCardBody');
+        tbody.innerHTML = "";
+
+        const ranges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]];
+        let cardCols = [];
+        for (let col = 0; col < 5; col++) {
+            let colNums = [];
+            let min = ranges[col][0], max = ranges[col][1];
+            while (colNums.length < 5) {
+                let rand = Math.floor(Math.random() * (max - min + 1)) + min;
+                if (!colNums.includes(rand)) colNums.push(rand);
+            }
+            cardCols.push(colNums);
+        }
+
+        for (let r = 0; r < 5; r++) {
+            const row = document.createElement('tr');
+            for (let c = 0; c < 5; c++) {
+                const cell = document.createElement('td');
+                if (r === 2 && c === 2) {
+                    cell.innerText = "★";
+                    cell.classList.add('marked');
+                } else {
+                    cell.innerText = cardCols[c][r];
+                    cell.id = `cell-${cardCols[c][r]}`;
+                }
+                row.appendChild(cell);
+            }
+            tbody.appendChild(row);
+        }
+    }
+
+    let calledBallsList = [];
+    let callCount = 0;
+
+    function startCallingBalls() {
+        document.getElementById('gameStatusTag').innerText = "LIVE";
+        if (callInterval) clearInterval(callInterval);
+
+        callInterval = setInterval(() => {
+            let availableBalls = [];
+            for (let i = 1; i <= 75; i++) {
+                if (!calledBallsList.includes(i)) availableBalls.push(i);
+            }
+            if (availableBalls.length === 0) return;
+
+            const randomBall = availableBalls[Math.floor(Math.random() * availableBalls.length)];
+            calledBallsList.push(randomBall);
+            callCount++;
+
+            document.getElementById('currentBallDisplay').innerText = randomBall;
+            document.getElementById('callCountDisplay').innerText = callCount;
+
+            const ballCell = document.getElementById(`ball-cell-${randomBall}`);
+            if (ballCell) ballCell.classList.add('called');
+
+            const cardCell = document.getElementById(`cell-${randomBall}`);
+            if (cardCell) cardCell.classList.add('marked');
+        }, 2500);
+    }
+
+    function checkBingo() {
+        const size = 5;
+        let winningLines = 0;
+        const tbody = document.getElementById('bingoCardBody');
+        const rows = tbody.getElementsByTagName('tr');
+        
+        let boardState = [];
+        for (let r = 0; r < size; r++) {
+            let rowArr = [];
+            const cells = rows[r].getElementsByTagName('td');
+            for (let c = 0; c < size; c++) {
+                rowArr.push({ marked: cells[c].classList.contains('marked') });
+            }
+            boardState.push(rowArr);
+        }
+
+        for (let r = 0; r < size; r++) {
+            let rowWin = true;
+            for (let c = 0; c < size; c++) {
+                if (r === 2 && c === 2) continue;
+                if (!boardState[r][c].marked) { rowWin = false; break; }
+            }
+            if (rowWin) winningLines++;
+        }
+
+        for (let c = 0; c < size; c++) {
+            let colWin = true;
+            for (let r = 0; r < size; r++) {
+                if (r === 2 && c === 2) continue;
+                if (!boardState[r][c].marked) { colWin = false; break; }
+            }
+            if (colWin) winningLines++;
+        }
+
+        let diag1Win = true, diag2Win = true;
+        for (let i = 0; i < size; i++) {
+            if (i === 2) continue;
+            if (!boardState[i][i].marked) diag1Win = false;
+            if (!boardState[i][size - 1 - i].marked) diag2Win = false;
+        }
+        if (diag1Win) winningLines++;
+        if (diag2Win) winningLines++;
+
+        return winningLines > 0;
+    }
+
+    function declareBingo() {
+        if (checkBingo()) {
+            if (callInterval) clearInterval(callInterval);
+            let currentPrize = parseFloat(document.getElementById('prizePoolDisplay').innerText) || 150;
+            
+            alert(`🎉 እንኳን ደስ አለዎት! ${currentPrize} ETB አሸንፈዋል! 🏆`);
+            userWallet += currentPrize;
+            document.getElementById('walletDisplay').innerText = userWallet;
+            document.getElementById('profileWallet').innerText = userWallet;
+            switchScreen('selectionScreen');
+        } else {
+            alert("⚠️ እስካሁን የተዘጋ ሙሉ መስመር የለም። እባክዎ ተጨማሪ ኳሶች እንዲጠሩ ይጠብቁ!");
+        }
+    }
+
+    fetchUserProfile();
+    fetchBookedCartelas();
+    setInterval(fetchBookedCartelas, 3000);
+</script>
